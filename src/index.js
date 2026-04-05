@@ -57,7 +57,40 @@ export async function exportToPptx(target, options = {}) {
   const PptxConstructor = resolvePptxConstructor(PptxGenJS);
   if (!PptxConstructor) throw new Error('PptxGenJS constructor not found.');
   const pptx = new PptxConstructor();
-  pptx.layout = 'LAYOUT_16x9';
+  
+  // 1. Layout Handling
+  let finalWidth = 10; // default 16:9
+  let finalHeight = 5.625;
+
+  if (options.width && options.height) {
+    pptx.defineLayout({ name: 'CUSTOM', width: options.width, height: options.height });
+    pptx.layout = 'CUSTOM';
+    finalWidth = options.width;
+    finalHeight = options.height;
+  } else if (options.layout) {
+    pptx.layout = options.layout;
+    // Map standard layouts for internal scale calculation if possible,
+    // though PptxGenJS defaults to 16:9 if unknown.
+    if (options.layout === 'LAYOUT_4x3') {
+        finalWidth = 10;
+        finalHeight = 7.5;
+    } else if (options.layout === 'LAYOUT_16x10') {
+        finalWidth = 10;
+        finalHeight = 6.25;
+    } else if (options.layout === 'LAYOUT_WIDE') {
+        finalWidth = 13.3;
+        finalHeight = 7.5;
+    }
+  } else {
+    pptx.layout = 'LAYOUT_16x9';
+  }
+
+  // Pass these dimensions to options so processSlide can use them
+  const extendedOptions = {
+    ...options,
+    _slideWidth: finalWidth,
+    _slideHeight: finalHeight
+  };
 
   const elements = Array.isArray(target) ? target : [target];
 
@@ -68,7 +101,7 @@ export async function exportToPptx(target, options = {}) {
       continue;
     }
     const slide = pptx.addSlide();
-    await processSlide(root, slide, pptx, options);
+    await processSlide(root, slide, pptx, extendedOptions);
   }
 
   // 3. Font Embedding Logic
@@ -158,8 +191,8 @@ export async function exportToPptx(target, options = {}) {
  */
 async function processSlide(root, slide, pptx, globalOptions = {}) {
   const rootRect = root.getBoundingClientRect();
-  const PPTX_WIDTH_IN = 10;
-  const PPTX_HEIGHT_IN = 5.625;
+  const PPTX_WIDTH_IN = globalOptions._slideWidth || 10;
+  const PPTX_HEIGHT_IN = globalOptions._slideHeight || 5.625;
 
   const contentWidthIn = rootRect.width * PX_TO_INCH;
   const contentHeightIn = rootRect.height * PX_TO_INCH;
