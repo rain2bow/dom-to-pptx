@@ -26,6 +26,7 @@ import {
   getUsedFontFamilies,
   getAutoDetectedFonts,
   extractTableData,
+  collectTextParts,
 } from './utils.js';
 import { getProcessedImage } from './image-processor.js';
 
@@ -537,20 +538,55 @@ function prepareRenderItem(
 
   if (node.tagName === 'TABLE') {
     const tableData = extractTableData(node, config.scale);
+    const tableItems = [
+      {
+        type: 'table',
+        zIndex: effectiveZIndex,
+        domOrder,
+        tableData: tableData,
+        options: { x, y, w: unrotatedW, h: unrotatedH },
+      },
+    ];
 
-    // Calculate total table width to ensure X position is correct
-    // (Though x calculation above usually handles it, tables can be finicky)
-    return {
-      items: [
-        {
-          type: 'table',
-          zIndex: effectiveZIndex,
-          domOrder,
-          tableData: tableData,
-          options: { x, y, w: unrotatedW, h: unrotatedH },
+    // 1. Check for Background / Shadow / Radius on the table itself
+    const shadowStr = style.boxShadow;
+    const hasShadow = shadowStr && shadowStr !== 'none';
+    const borderRadius = parseFloat(style.borderRadius) || 0;
+    const bgColor = parseColor(style.backgroundColor);
+    const hasBg = bgColor.hex && bgColor.opacity > 0;
+
+    if (hasShadow || borderRadius > 0 || hasBg) {
+      const transparency = (1 - bgColor.opacity) * 100;
+      const shadow = hasShadow ? getVisibleShadow(shadowStr, config.scale) : null;
+      let shapeType = pptx.ShapeType.rect;
+      let rectRadius = 0;
+
+      if (borderRadius > 0) {
+        shapeType = pptx.ShapeType.roundRect;
+        rectRadius = Math.min(borderRadius / Math.min(widthPx, heightPx), 0.5);
+      }
+
+      // Add a backing shape item before the table
+      tableItems.unshift({
+        type: 'shape',
+        zIndex: effectiveZIndex,
+        domOrder, // Same domOrder ensures it renders before the table (queue order)
+        shapeType,
+        options: {
+          x,
+          y,
+          w: unrotatedW,
+          h: unrotatedH,
+          fill: hasBg ? { color: bgColor.hex, transparency } : { type: 'none' },
+          shadow,
+          rectRadius,
         },
-      ],
-      stopRecursion: true, // Important: Don't process TR/TD as separate shapes
+      });
+    }
+
+    return {
+      items: tableItems,
+      stopRecursion: true,
     };
   }
 
@@ -633,7 +669,7 @@ function prepareRenderItem(
       }
 
       // 3. Extract Text Parts
-      const parts = collectListParts(child, liStyle, config.scale);
+      const parts = collectTextParts(child, liStyle, config.scale);
 
       if (parts.length > 0) {
         parts.forEach((p) => {
@@ -1264,46 +1300,6 @@ function isComplexHierarchy(root) {
   return false;
 }
 
-function collectListParts(node, parentStyle, scale) {
-  const parts = [];
-
-  // Check for CSS Content (::before) - often used for icons
-  if (node.nodeType === 1) {
-    const beforeStyle = window.getComputedStyle(node, '::before');
-    const content = beforeStyle.content;
-    if (content && content !== 'none' && content !== 'normal' && content !== '""') {
-      // Strip quotes
-      const cleanContent = content.replace(/^['"]|['"]$/g, '');
-      if (cleanContent.trim()) {
-        parts.push({
-          text: cleanContent + ' ', // Add space after icon
-          options: getTextStyle(window.getComputedStyle(node), scale),
-        });
-      }
-    }
-  }
-
-  node.childNodes.forEach((child) => {
-    if (child.nodeType === 3) {
-      // Text
-      const val = child.nodeValue.replace(/[\n\r\t]+/g, ' ').replace(/\s{2,}/g, ' ');
-      if (val) {
-        // Use parent style if child is text node, otherwise current style
-        const styleToUse = node.nodeType === 1 ? window.getComputedStyle(node) : parentStyle;
-        parts.push({
-          text: val,
-          options: getTextStyle(styleToUse, scale),
-        });
-      }
-    } else if (child.nodeType === 1) {
-      // Element (span, i, b)
-      // Recurse
-      parts.push(...collectListParts(child, parentStyle, scale));
-    }
-  });
-
-  return parts;
-}
 
 function createCompositeBorderItems(sides, x, y, w, h, scale, zIndex, domOrder) {
   const items = [];
