@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.7] - 2026-04-21
+
+### Added
+
+- **Native URL Background-Image**: Extended CSS extraction to organically parse `background-image: url('...')` blocks, leveraging CSS properties like `background-size` directly into the PPTX image crops.
+
+### Fixed
+
+- **Fractional Font Precision**: Abandoned destructive rounding when resolving HTML pixel layouts into PPTX typographical points (`pt`), enabling accurate 1/10th decimal scaling for accurate small font conversions.
+- **AutoFit CJK Word Wraps**: Swapped out hard bounding boxes on textual spans to inject `<a:spAutoFit/>`, letting PowerPoint actively grow the block bounds when fluid lines or CJK formats forcefully wrap beyond the original Chrome layout metric.
+- **Table Nested Text Line Breaks**: Remapped logic blocking structural line wrapping (e.g. `<br>`, `<div>`) within nested `<td/th>` wrappers preventing paragraph-mushing over complex table schemas.
+- **Vertical Flow Orientation**: Fixed CSS `writing-mode` matching. Dynamically routes explicit `vertical-lr` and `vertical-rl` coupled with CSS `text-orientation: upright` specifically into their exact PowerPoint vertical equivalents.
+- **Corrupt PPTX Fix (rectRadius)**: Resolved a critical "corrupt presentation" error caused by passing raw ratios for `rectRadius` to PptxGenJS. The library now calculates and passes absolute inch values capped at 50% for maximum stability.
+
+### Changed
+
+- **Documentation Standards**: Extensively published guidelines establishing CSS `grid`/`flex` layout priority over restrictive legacy `table` parameters in SUPPORTED.md.
+
 ## [1.1.6] - 2026-04-05
 
 ### Added

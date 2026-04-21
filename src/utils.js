@@ -473,7 +473,7 @@ export function getTextStyle(style, scale) {
   return {
     color: colorObj.hex || '000000',
     fontFace: style.fontFamily.split(',')[0].replace(/['"]/g, ''),
-    fontSize: Math.floor(fontSizePx * 0.75 * scale),
+    fontSize: Number((fontSizePx * 0.75 * scale).toFixed(1)),
     bold: parseInt(style.fontWeight) >= 600,
     italic: style.fontStyle === 'italic',
     underline: style.textDecoration.includes('underline'),
@@ -572,10 +572,14 @@ export function getRotation(transformStr) {
   return Math.round(Math.atan2(b, a) * (180 / Math.PI));
 }
 
-export function getWritingModeVert(writingMode) {
+export function getWritingModeVert(writingMode, textOrientation) {
+  const isUpright = textOrientation === 'upright';
+
   switch (writingMode) {
     case 'vertical-rl':
+      return isUpright ? 'wordArtVertRtl' : 'eaVert';
     case 'vertical-lr':
+      return isUpright ? 'wordArtVert' : 'mongolianVert';
     case 'sideways-rl':
       return 'vert';
     case 'sideways-lr':
@@ -838,6 +842,30 @@ export function generateGradientSVG(w, h, bgString, radius, border) {
       strokeAttr = `stroke="#${border.color}" stroke-width="${border.width}"`;
     }
 
+    let tl = 0, tr = 0, br = 0, bl = 0;
+    if (typeof radius === 'object' && radius !== null) {
+      tl = radius.tl || 0;
+      tr = radius.tr || 0;
+      br = radius.br || 0;
+      bl = radius.bl || 0;
+    } else {
+      tl = tr = br = bl = radius || 0;
+    }
+
+    const factor = Math.min(
+      w / (tl + tr) || Infinity,
+      h / (tr + br) || Infinity,
+      w / (br + bl) || Infinity,
+      h / (bl + tl) || Infinity
+    );
+
+    if (factor < 1) {
+      tl *= factor; tr *= factor; br *= factor; bl *= factor;
+    }
+
+    // Generate absolute path based on radius bounds
+    const pathD = `M ${tl} 0 L ${w - tr} 0 A ${tr} ${tr} 0 0 1 ${w} ${tr} L ${w} ${h - br} A ${br} ${br} 0 0 1 ${w - br} ${h} L ${bl} ${h} A ${bl} ${bl} 0 0 1 0 ${h - bl} L 0 ${tl} A ${tl} ${tl} 0 0 1 ${tl} 0 Z`;
+
     const svg = `
       <svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
           <defs>
@@ -845,7 +873,7 @@ export function generateGradientSVG(w, h, bgString, radius, border) {
               ${stopsXML}
             </linearGradient>
           </defs>
-          <rect x="0" y="0" width="${w}" height="${h}" rx="${radius}" ry="${radius}" fill="url(#grad)" ${strokeAttr} />
+          <path d="${pathD}" fill="url(#grad)" ${strokeAttr} />
       </svg>`;
 
     return 'data:image/svg+xml;base64,' + btoa(svg);
@@ -1009,10 +1037,20 @@ export function collectTextParts(node, parentStyle, scale) {
     }
   }
 
-  node.childNodes.forEach((child) => {
+  let trimNextLeading = false;
+
+  node.childNodes.forEach((child, index) => {
     if (child.nodeType === 3) {
       // Text
       let val = child.nodeValue.replace(/[\n\r\t]+/g, ' ').replace(/\s{2,}/g, ' ');
+
+      if (index === 0) val = val.trimStart();
+      if (trimNextLeading) {
+        val = val.trimStart();
+        trimNextLeading = false;
+      }
+      if (index === node.childNodes.length - 1) val = val.trimEnd();
+
       if (val) {
         // Use parent style if child is text node, otherwise current style
         const styleToUse = node.nodeType === 1 ? window.getComputedStyle(node) : parentStyle;
@@ -1027,11 +1065,36 @@ export function collectTextParts(node, parentStyle, scale) {
         });
       }
     } else if (child.nodeType === 1) {
-      // Element (span, i, b)
-      // Recurse
-      parts.push(...collectTextParts(child, parentStyle, scale));
+      if (child.tagName === 'BR') {
+        if (parts.length > 0) {
+          const lastPart = parts[parts.length - 1];
+          if (lastPart.text && typeof lastPart.text === 'string') {
+            lastPart.text = lastPart.text.trimEnd();
+          }
+        }
+        parts.push({ text: '', options: { breakLine: true } });
+        trimNextLeading = true;
+      } else {
+        const isBlock = ['DIV', 'P', 'LI'].includes(child.tagName);
+        if (isBlock && parts.length > 0 && !parts[parts.length - 1].options?.breakLine) {
+          parts.push({ text: '', options: { breakLine: true } });
+        }
+
+        const childParts = collectTextParts(child, parentStyle, scale);
+        if (childParts.length > 0) parts.push(...childParts);
+
+        if (isBlock) {
+          parts.push({ text: '', options: { breakLine: true } });
+          trimNextLeading = true;
+        }
+      }
     }
   });
+
+  // Cleanup potential trailing empty breakLines
+  while (parts.length > 0 && parts[parts.length - 1].options?.breakLine && parts[parts.length - 1].text === '') {
+    parts.pop();
+  }
 
   return parts;
 }

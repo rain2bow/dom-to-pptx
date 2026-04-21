@@ -1,18 +1,19 @@
 # dom-to-pptx
 
-**The High-Fidelity HTML to PowerPoint Converter (v1.1.6)**
+**The High-Fidelity HTML to PowerPoint Converter (v1.1.7)**
 
 Most HTML-to-PPTX libraries fail when faced with modern web design. They break on gradients, misalign text, ignore rounded corners, or simply take a screenshot (which isn't editable).
 
 **dom-to-pptx** is different. It is a **Coordinate Scraper & Style Engine** that traverses your DOM, calculates the exact computed styles of every element (Flexbox/Grid positions, complex gradients, shadows), and mathematically maps them to native PowerPoint shapes and text boxes. The result is a fully editable, vector-sharp presentation that looks exactly like your web view.
 
-### 🛠️ Updates in v1.1.6
+### 🛠️ Updates in v1.1.7
 
-- **Advanced Table Rendering:** Resolved rendering issues by aligning cell border formats with the PptxGenJS positional array API.
-- **Portrait & Custom Layouts:** Implemented support for portrait view and custom slide dimensions via new `width`, `height`, and `layout` options.
-- **Grid-based Table Logic:** Implemented a simulation for `border-spacing` using cell margins to maintain visual gaps in PptxGenJS native tables.
-- **Improved Typography:** Added support for `text-transform` (uppercase, lowercase, capitalize) and `letter-spacing` (charSpacing).
-- **Nested Cell Formatting:** Table cells now support rich text runs, preserving bold, italic, and colored spans within cells.
+- **Precision Typography Scale:** Dropped destructive integer rounding for font scale conversions, actively preserving 1/10th fractional point scaling (e.g. 11.3pt) for pixel-perfect small font sizes.
+- **Fluid Layout AutoFit:** Universally deployed `autoFit` bounds within generated PPTX wrappers ensuring aggressive line breaks (especially common in foreign/CJK fonts) expand slide bounds dynamically instead of overlapping natively.
+- **URL Background Interception:** Fully integrated Native CSS `background-image: url(...)` interception bypassing solid-fill blocks entirely and feeding straight into the off-screen image processing engine (retaining `cover`/`contain`).
+- **Advanced Writing Modes:** Added granular translation for strictly upright vertical text flows vs rotated default East Asian modes natively supporting combinations like `.vertical-lr` coupled with `text-orientation: upright`.
+- **Nested Table Formatting:** Fixed internal line-break translation engines to respect block level wrappers inside native `<td/th>` cells avoiding smashed character sequences.
+- **Corrupt PPTX Resolution:** Fixed a crash/corruption bug during export where extreme corner-radius calculations generated invalid XML; now enforces stable, cap-safe rounding metrics across all shapes.
 
 ## Features
 

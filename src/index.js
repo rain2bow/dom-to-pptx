@@ -538,7 +538,7 @@ function prepareRenderItem(
               options: getTextStyle(style, config.scale),
             },
           ],
-          options: { x, y, w: unrotatedW, h: unrotatedH, margin: 0, autoFit: false },
+          options: { x, y, w: unrotatedW, h: unrotatedH, margin: 0, autoFit: true },
         },
       ],
       stopRecursion: false,
@@ -553,7 +553,7 @@ function prepareRenderItem(
 
   const zIndex = effectiveZIndex;
   const rotation = getRotation(style.transform);
-  const writingModeVert = getWritingModeVert(style.writingMode);
+  const writingModeVert = getWritingModeVert(style.writingMode, style.textOrientation);
   const elementOpacity = parseFloat(style.opacity);
   const safeOpacity = isNaN(elementOpacity) ? 1 : elementOpacity;
 
@@ -598,7 +598,8 @@ function prepareRenderItem(
 
       if (borderRadius > 0) {
         shapeType = pptx.ShapeType.roundRect;
-        rectRadius = Math.min(borderRadius / Math.min(widthPx, heightPx), 0.5);
+        let cappedRadiusPx = Math.min(borderRadius, Math.min(widthPx, heightPx) / 2);
+        rectRadius = cappedRadiusPx * PX_TO_INCH * config.scale;
       }
 
       // Add a backing shape item before the table
@@ -796,7 +797,7 @@ function prepareRenderItem(
           align: 'left',
           valign: 'top',
           margin: 0,
-          autoFit: false,
+          autoFit: true,
           wrap: true,
           vert: writingModeVert,
         },
@@ -934,15 +935,9 @@ function prepareRenderItem(
   const borderTopRightRadius = parseFloat(style.borderTopRightRadius) || 0;
 
   const hasPartialBorderRadius =
-    (borderBottomLeftRadius > 0 && borderBottomLeftRadius !== borderRadiusValue) ||
-    (borderBottomRightRadius > 0 && borderBottomRightRadius !== borderRadiusValue) ||
-    (borderTopLeftRadius > 0 && borderTopLeftRadius !== borderRadiusValue) ||
-    (borderTopRightRadius > 0 && borderTopRightRadius !== borderRadiusValue) ||
-    (borderRadiusValue === 0 &&
-      (borderBottomLeftRadius ||
-        borderBottomRightRadius ||
-        borderTopLeftRadius ||
-        borderTopRightRadius));
+    borderTopLeftRadius !== borderTopRightRadius ||
+    borderTopLeftRadius !== borderBottomRightRadius ||
+    borderTopLeftRadius !== borderBottomLeftRadius;
 
   // --- PRIORITY SVG: Solid Fill with Partial Border Radius (Vector Cone/Tab) ---
   // Fix for "missing cone": Prioritize SVG vector generation over Raster Canvas for simple shapes with partial radii.
@@ -1004,8 +999,10 @@ function prepareRenderItem(
   const bgColorObj = parseColor(style.backgroundColor);
   const bgClip = style.webkitBackgroundClip || style.backgroundClip;
   const isBgClipText = bgClip === 'text';
-  const hasGradient =
-    !isBgClipText && style.backgroundImage && style.backgroundImage.includes('linear-gradient');
+  const bgImgStr = style.backgroundImage;
+  const hasGradient = !isBgClipText && bgImgStr && bgImgStr.includes('linear-gradient');
+  const urlMatch = !isBgClipText && !hasGradient && bgImgStr ? bgImgStr.match(/url\(['"]?(.*?)['"]?\)/) : null;
+  const hasBgImgUrl = !!urlMatch;
 
   const borderColorObj = parseColor(style.borderColor);
   const borderWidth = parseFloat(style.borderWidth);
@@ -1101,48 +1098,86 @@ function prepareRenderItem(
     }
   }
 
-  if (hasGradient || (softEdge && bgColorObj.hex && !isImageWrapper)) {
-    let bgData = null;
-    let padIn = 0;
-    if (softEdge) {
-      const svgInfo = generateBlurredSVG(
-        widthPx,
-        heightPx,
-        bgColorObj.hex,
-        borderRadiusValue,
-        softEdge
-      );
-      bgData = svgInfo.data;
-      padIn = svgInfo.padding * PX_TO_INCH * config.scale;
-    } else {
-      bgData = generateGradientSVG(
-        widthPx,
-        heightPx,
-        style.backgroundImage,
-        borderRadiusValue,
-        hasBorder ? { color: borderColorObj.hex, width: borderWidth } : null
-      );
-    }
+  let bgJob = null;
 
-    if (bgData) {
-      items.push({
+  if (hasBgImgUrl || hasGradient || (softEdge && bgColorObj.hex && !isImageWrapper)) {
+    if (hasBgImgUrl) {
+      const bgUrl = urlMatch[1];
+      const radii = {
+        tl: parseFloat(style.borderTopLeftRadius) || 0,
+        tr: parseFloat(style.borderTopRightRadius) || 0,
+        br: parseFloat(style.borderBottomRightRadius) || 0,
+        bl: parseFloat(style.borderBottomLeftRadius) || 0,
+      };
+      
+      const bgItem = {
         type: 'image',
         zIndex,
         domOrder,
-        options: {
-          data: bgData,
-          x: x - padIn,
-          y: y - padIn,
-          w: w + padIn * 2,
-          h: h + padIn * 2,
-          rotate: rotation,
-        },
-      });
+        options: { x, y, w, h, rotate: rotation, data: null },
+      };
+      items.push(bgItem);
+      
+      bgJob = async () => {
+        const processed = await getProcessedImage(
+          bgUrl,
+          widthPx,
+          heightPx,
+          radii,
+          style.backgroundSize || 'cover',
+          style.backgroundPosition || '50% 50%'
+        );
+        if (processed) bgItem.options.data = processed;
+        else bgItem.skip = true;
+      };
+    } else {
+      let bgData = null;
+      let padIn = 0;
+      if (softEdge) {
+        const svgInfo = generateBlurredSVG(
+          widthPx,
+          heightPx,
+          bgColorObj.hex,
+          borderRadiusValue,
+          softEdge
+        );
+        bgData = svgInfo.data;
+        padIn = svgInfo.padding * PX_TO_INCH * config.scale;
+      } else {
+        bgData = generateGradientSVG(
+          widthPx,
+          heightPx,
+          style.backgroundImage,
+          hasPartialBorderRadius ? {
+            tl: borderTopLeftRadius,
+            tr: borderTopRightRadius,
+            br: borderBottomRightRadius,
+            bl: borderBottomLeftRadius
+          } : borderRadiusValue,
+          hasBorder ? { color: borderColorObj.hex, width: borderWidth } : null
+        );
+      }
+
+      if (bgData) {
+        items.push({
+          type: 'image',
+          zIndex,
+          domOrder,
+          options: {
+            data: bgData,
+            x: x - padIn,
+            y: y - padIn,
+            w: w + padIn * 2,
+            h: h + padIn * 2,
+            rotate: rotation,
+          },
+        });
+      }
     }
 
     if (textPayload) {
       textPayload.text[0].options.fontSize =
-        Math.floor(textPayload.text[0]?.options?.fontSize) || 12;
+        Number(textPayload.text[0]?.options?.fontSize?.toFixed(1)) || 12;
       items.push({
         type: 'text',
         zIndex: zIndex + 1,
@@ -1159,7 +1194,7 @@ function prepareRenderItem(
           rotate: rotation,
           margin: 0,
           wrap: true,
-          autoFit: false,
+          autoFit: true,
           vert: writingModeVert,
         },
       });
@@ -1250,16 +1285,13 @@ function prepareRenderItem(
       // CASE B: It is a Rounded Rectangle (including "Pill" shapes)
       else if (radiusPx > 0) {
         shapeType = pptx.ShapeType.roundRect;
-        let r = radiusPx / minDimension;
-        if (r > 0.5) r = 0.5;
-        if (minDimension < 100) r = r * 0.25; // Small size adjustment for small shapes
-
-        shapeOpts.rectRadius = r;
+        let cappedRadiusPx = Math.min(radiusPx, minDimension / 2);
+        shapeOpts.rectRadius = cappedRadiusPx * PX_TO_INCH * config.scale;
       }
 
       if (textPayload) {
         textPayload.text[0].options.fontSize =
-          Math.floor(textPayload.text[0]?.options?.fontSize) || 12;
+          Number(textPayload.text[0]?.options?.fontSize?.toFixed(1)) || 12;
         const textOptions = {
           shape: shapeType,
           ...shapeOpts,
@@ -1269,7 +1301,7 @@ function prepareRenderItem(
           inset: textPayload.inset,
           margin: 0,
           wrap: true,
-          autoFit: false,
+          autoFit: true,
           vert: writingModeVert,
         };
         items.push({
@@ -1308,7 +1340,7 @@ function prepareRenderItem(
     }
   }
 
-  return { items, stopRecursion: !!textPayload };
+  return { items, job: bgJob, stopRecursion: !!textPayload };
 }
 
 function isComplexHierarchy(root) {
