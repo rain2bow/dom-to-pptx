@@ -68,9 +68,12 @@ export function extractTableData(node, scale) {
     const rowData = [];
     const cellList = Array.from(tr.children).filter((c) => ['TD', 'TH'].includes(c.tagName));
 
-    cellList.forEach((cell) => {
-      const style = window.getComputedStyle(cell);
-      const cellParts = collectTextParts(cell, style, scale);
+      cellList.forEach((cell) => {
+        const style = window.getComputedStyle(cell);
+        const cellParts = collectTextParts(cell, style, scale);
+        // Fallback to plain text if collectTextParts returns empty/invalid
+        const cellText = (cellParts && cellParts.length > 0) ? cellParts
+          : cell.innerText.replace(/[\n\r\t]+/g, ' ').trim();
 
       // A. Text Style
       const textStyle = getTextStyle(style, scale);
@@ -117,7 +120,7 @@ export function extractTableData(node, scale) {
 
       // F. Construct Cell Object
       rowData.push({
-        text: cellParts,
+        text: cellText,
         options: {
           color: textStyle.color,
           fontFace: textStyle.fontFace,
